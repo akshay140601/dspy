@@ -15,6 +15,8 @@ import dsp
 
 settings = dsp.settings
 
+LM = dsp.LM
+
 OpenAI = dsp.GPT3
 Cohere = dsp.Cohere
 ColBERTv2 = dsp.ColBERTv2
@@ -26,6 +28,13 @@ HFClientVLLM = HFClientVLLM
 
 Anyscale = dsp.Anyscale
 HFModel = dsp.HFModel
+
+Bedrock = dsp.Bedrock
+Sagemaker = dsp.Sagemaker
+AWSModel = dsp.AWSModel
+AWSMistral = dsp.AWSMistral
+AWSAnthropic = dsp.AWSAnthropic
+AWSMeta = dsp.AWSMeta
 
 configure = settings.configure
 context = settings.context

@@ -18,9 +18,13 @@ try:
     import openai.error
     from openai.openai_object import OpenAIObject
 
-    ERRORS = (openai.error.RateLimitError,)
+    ERRORS = (
+        openai.error.RateLimitError,
+        openai.error.ServiceUnavailableError,
+        openai.error.APIError,
+    )
 except Exception:
-    ERRORS = (openai.RateLimitError,)
+    ERRORS = (openai.RateLimitError, openai.APIError)
     OpenAIObject = dict
 
 
@@ -33,52 +37,68 @@ def backoff_hdlr(details):
     )
 
 
-class GPT3(LM):
-    """Wrapper around OpenAI's GPT API.
+class AzureOpenAI(LM):
+    """Wrapper around Azure's API for OpenAI.
 
     Args:
-        model (str, optional): OpenAI supported LLM model to use. Defaults to "gpt-3.5-turbo-instruct".
+        api_base (str): Azure URL endpoint for model calling, often called 'azure_endpoint'.
+        api_version (str): Version identifier for API.
+        model (str, optional): OpenAI or Azure supported LLM model to use. Defaults to "gpt-3.5-turbo-instruct".
         api_key (Optional[str], optional): API provider Authentication token. use Defaults to None.
-        api_provider (Literal["openai"], optional): The API provider to use. Defaults to "openai".
-        model_type (Literal["chat", "text"], optional): The type of model that was specified. Mainly to decide the optimal prompting strategy. Defaults to "text".
+        model_type (Literal["chat", "text"], optional): The type of model that was specified. Mainly to decide the optimal prompting strategy. Defaults to "chat".
         **kwargs: Additional arguments to pass to the API provider.
     """
 
     def __init__(
         self,
+        api_base: str,
+        api_version: str,
         model: str = "gpt-3.5-turbo-instruct",
         api_key: Optional[str] = None,
-        api_provider: Literal["openai"] = "openai",
-        api_base: Optional[str] = None,
-        model_type: Literal["chat", "text"] = None,
+        model_type: Literal["chat", "text"] = "chat",
         system_prompt: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(model)
         self.provider = "openai"
-        openai.api_type = api_provider
 
         self.system_prompt = system_prompt
 
-        assert (
-            api_provider != "azure"
-        ), "Azure functionality with base OpenAI has been deprecated, please use dspy.AzureOpenAI instead."
+        # Define Client
+        if OPENAI_LEGACY:
+            # Assert that all variables are available
+            assert (
+                "engine" in kwargs or "deployment_id" in kwargs
+            ), "Must specify engine or deployment_id for Azure API instead of model."
 
-        default_model_type = (
-            "chat"
-            if ("gpt-3.5" in model or "turbo" in model or "gpt-4" in model) and ("instruct" not in model)
-            else "text"
-        )
-        self.model_type = model_type if model_type else default_model_type
-
-        if api_key:
+            openai.api_base = api_base
             openai.api_key = api_key
+            openai.api_type = "azure"
+            openai.api_version = api_version
 
-        if api_base:
-            if OPENAI_LEGACY:
-                openai.api_base = api_base
-            else:
-                openai.base_url = api_base
+            self.client = None
+
+        else:
+            client = openai.AzureOpenAI(
+                azure_endpoint=api_base,
+                api_key=api_key,
+                api_version=api_version,
+            )
+
+            self.client = client
+
+        self.model_type = model_type
+
+        if not OPENAI_LEGACY and "model" not in kwargs:
+            if "deployment_id" in kwargs:
+                kwargs["model"] = kwargs["deployment_id"]
+                del kwargs["deployment_id"]
+
+            if "api_version" in kwargs:
+                del kwargs["api_version"]
+
+        if "model" not in kwargs:
+            kwargs["model"] = model
 
         self.kwargs = {
             "temperature": 0.0,
@@ -90,18 +110,24 @@ class GPT3(LM):
             **kwargs,
         }  # TODO: add kwargs above for </s>
 
-        self.kwargs["model"] = model
+        self.api_base = api_base
+        self.api_version = api_version
+        self.api_key = api_key
+
         self.history: list[dict[str, Any]] = []
 
     def _openai_client(self):
-        return openai
+        if OPENAI_LEGACY:
+            return openai
+
+        return self.client
 
     def log_usage(self, response):
-        """Log the total tokens from the OpenAI API response."""
+        """Log the total tokens from the Azure OpenAI API response."""
         usage_data = response.get("usage")
         if usage_data:
             total_tokens = usage_data.get("total_tokens")
-            logging.debug(f"OpenAI Response Token Usage: {total_tokens}")
+            logging.debug(f"Azure OpenAI Total Token Usage: {total_tokens}")
 
     def basic_request(self, prompt: str, **kwargs):
         raw_kwargs = kwargs
@@ -112,13 +138,14 @@ class GPT3(LM):
             messages = [{"role": "user", "content": prompt}]
             if self.system_prompt:
                 messages.insert(0, {"role": "system", "content": self.system_prompt})
+
             kwargs["messages"] = messages
             kwargs = {"stringify_request": json.dumps(kwargs)}
-            response = chat_request(**kwargs)
+            response = chat_request(self.client, **kwargs)
 
         else:
             kwargs["prompt"] = prompt
-            response = completions_request(**kwargs)
+            response = completions_request(self.client, **kwargs)
 
         history = {
             "prompt": prompt,
@@ -137,7 +164,7 @@ class GPT3(LM):
         on_backoff=backoff_hdlr,
     )
     def request(self, prompt: str, **kwargs):
-        """Handles retreival of GPT-3 completions whilst handling rate limiting and caching."""
+        """Handles retrieval of GPT-3 completions whilst handling rate limiting and caching."""
         if "model_type" in kwargs:
             del kwargs["model_type"]
 
@@ -155,7 +182,7 @@ class GPT3(LM):
         return_sorted: bool = False,
         **kwargs,
     ) -> list[dict[str, Any]]:
-        """Retrieves completions from GPT-3.
+        """Retrieves completions from OpenAI Model.
 
         Args:
             prompt (str): prompt to send to GPT-3
@@ -169,15 +196,10 @@ class GPT3(LM):
         assert only_completed, "for now"
         assert return_sorted is False, "for now"
 
-        # if kwargs.get("n", 1) > 1:
-        #     if self.model_type == "chat":
-        #         kwargs = {**kwargs}
-        #     else:
-        #         kwargs = {**kwargs, "logprobs": 5}
-
         response = self.request(prompt, **kwargs)
 
         self.log_usage(response)
+
         choices = response["choices"]
 
         completed_choices = [c for c in choices if c["finish_reason"] != "length"]
@@ -185,11 +207,7 @@ class GPT3(LM):
         if only_completed and len(completed_choices):
             choices = completed_choices
 
-        if kwargs.get("logprobs", False):
-            completions = [{'text': self._get_choice_text(c), 'logprobs': c["logprobs"]} for c in choices]
-        else:
-            completions = [self._get_choice_text(c) for c in choices]
-
+        completions = [self._get_choice_text(c) for c in choices]
         if return_sorted and kwargs.get("n", 1) > 1:
             scored_completions = []
 
@@ -204,14 +222,25 @@ class GPT3(LM):
                     tokens, logprobs = tokens[:index], logprobs[:index]
 
                 avglog = sum(logprobs) / len(logprobs)
-                scored_completions.append((avglog, self._get_choice_text(c), logprobs))
+                scored_completions.append((avglog, self._get_choice_text(c)))
+
             scored_completions = sorted(scored_completions, reverse=True)
-            if logprobs:
-                completions = [{'text': c, 'logprobs': lp} for _, c, lp in scored_completions]
-            else:
-                completions = [c for _, c in scored_completions]
+            completions = [c for _, c in scored_completions]
 
         return completions
+
+    def copy(self, **kwargs):
+        """Returns a copy of the language model with the same parameters."""
+        kwargs = {**self.kwargs, **kwargs}
+        model = kwargs.pop("model")
+
+        return self.__class__(
+            model=model,
+            api_key=self.api_key,
+            api_version=self.api_version,
+            api_base=self.api_base,
+            **kwargs,
+        )
 
 
 @CacheMemory.cache
@@ -238,39 +267,43 @@ def _cached_gpt3_turbo_request_v2_wrapped(**kwargs) -> OpenAIObject:
     return _cached_gpt3_turbo_request_v2(**kwargs)
 
 
-@CacheMemory.cache
-def v1_cached_gpt3_request_v2(**kwargs):
-    return openai.completions.create(**kwargs)
+def v1_chat_request(client, **kwargs):
+    @functools.lru_cache(maxsize=None if cache_turn_on else 0)
+    @NotebookCacheMemory.cache
+    def v1_cached_gpt3_turbo_request_v2_wrapped(**kwargs):
+        @CacheMemory.cache
+        def v1_cached_gpt3_turbo_request_v2(**kwargs):
+            if "stringify_request" in kwargs:
+                kwargs = json.loads(kwargs["stringify_request"])
+            return client.chat.completions.create(**kwargs)
 
-
-@functools.lru_cache(maxsize=None if cache_turn_on else 0)
-@NotebookCacheMemory.cache
-def v1_cached_gpt3_request_v2_wrapped(**kwargs):
-    return v1_cached_gpt3_request_v2(**kwargs)
-
-
-@CacheMemory.cache
-def v1_cached_gpt3_turbo_request_v2(**kwargs):
-    if "stringify_request" in kwargs:
-        kwargs = json.loads(kwargs["stringify_request"])
-    return openai.chat.completions.create(**kwargs)
-
-
-@functools.lru_cache(maxsize=None if cache_turn_on else 0)
-@NotebookCacheMemory.cache
-def v1_cached_gpt3_turbo_request_v2_wrapped(**kwargs):
-    return v1_cached_gpt3_turbo_request_v2(**kwargs)
-
-
-def chat_request(**kwargs):
-    if OPENAI_LEGACY:
-        return _cached_gpt3_turbo_request_v2_wrapped(**kwargs)
+        return v1_cached_gpt3_turbo_request_v2(**kwargs)
 
     return v1_cached_gpt3_turbo_request_v2_wrapped(**kwargs).model_dump()
 
 
-def completions_request(**kwargs):
+def v1_completions_request(client, **kwargs):
+    @functools.lru_cache(maxsize=None if cache_turn_on else 0)
+    @NotebookCacheMemory.cache
+    def v1_cached_gpt3_request_v2_wrapped(**kwargs):
+        @CacheMemory.cache
+        def v1_cached_gpt3_request_v2(**kwargs):
+            return client.completions.create(**kwargs)
+
+        return v1_cached_gpt3_request_v2(**kwargs)
+
+    return v1_cached_gpt3_request_v2_wrapped(**kwargs).model_dump()
+
+
+def chat_request(client, **kwargs):
+    if OPENAI_LEGACY:
+        return _cached_gpt3_turbo_request_v2_wrapped(**kwargs)
+
+    return v1_chat_request(client, **kwargs)
+
+
+def completions_request(client, **kwargs):
     if OPENAI_LEGACY:
         return cached_gpt3_request_v2_wrapped(**kwargs)
 
-    return v1_cached_gpt3_request_v2_wrapped(**kwargs).model_dump()
+    return v1_completions_request(client, **kwargs)
