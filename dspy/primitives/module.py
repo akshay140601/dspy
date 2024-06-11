@@ -50,7 +50,7 @@ class BaseModule:
         return copy.deepcopy(self)
 
     def reset_copy(self, only_reset_uncompiled=False):
-        obj = copy.deepcopy(self)
+        obj = copy.copy(self)
         
         for param in obj.parameters():
             if only_reset_uncompiled:
