@@ -47,15 +47,15 @@ class BaseModule:
         return [param for _, param in self.named_parameters()]
 
     def deepcopy(self, memo={}):
-    cls = self.__class__
-    result = cls.__new__(cls)
-    memo[id(self)] = result
-    print("Dictionary items: ", self.__dict__.items())
-
-    for k, v in self.__dict__.items():
-        setattr(result, k, copy.deepcopy(v, memo))
-
-    return result
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        print("Dictionary items: ", self.__dict__.items())
+    
+        for k, v in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+    
+        return result
 
     def reset_copy(self, only_reset_uncompiled=False):
         obj = copy.copy(self)
