@@ -47,7 +47,7 @@ class BaseModule:
         return [param for _, param in self.named_parameters()]
 
     def deepcopy(self):
-        return copy.deepcopy(self)
+        return copy.copy(self)
 
     def reset_copy(self, only_reset_uncompiled=False):
         obj = copy.copy(self)
