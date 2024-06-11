@@ -6,7 +6,7 @@ import copy
 class Settings:
     def __init__(self):
         # A lock for ensuring thread-safety when accessing _parent_configs
-        self._lock = threading.Lock()
+        #self._lock = threading.Lock()
         
         # Dictionary to hold parent thread configurations
         self._parent_configs = {}
@@ -19,12 +19,12 @@ class Settings:
 
     def initialize_for_thread(self, parent_tid):
         """Initialize thread-local data for a new thread using its parent's config."""
-        with self._lock:
-            parent_config = self._parent_configs.get(parent_tid)
-            if parent_config:
-                self._local.config_stack = [copy.deepcopy(parent_config)]
-            else:
-                self._local.config_stack = [{}]
+        #with self._lock:
+        parent_config = self._parent_configs.get(parent_tid)
+        if parent_config:
+            self._local.config_stack = [copy.deepcopy(parent_config)]
+        else:
+            self._local.config_stack = [{}]
 
     @contextmanager
     def context(self, **kwargs):
@@ -37,8 +37,8 @@ class Settings:
         self._local.config_stack.append(current_config)
 
         # Register the modified config as the potential parent config
-        with self._lock:
-            self._parent_configs[threading.get_ident()] = copy.deepcopy(current_config)  # Deep copy to ensure immutability
+        #with self._lock:
+        self._parent_configs[threading.get_ident()] = copy.deepcopy(current_config)  # Deep copy to ensure immutability
 
         try:
             yield
@@ -46,8 +46,8 @@ class Settings:
             self._local.config_stack.pop()
 
             # Cleanup after exiting the context
-            with self._lock:
-                self._parent_configs.pop(threading.get_ident(), None)
+            #with self._lock:
+            self._parent_configs.pop(threading.get_ident(), None)
 
 # Singleton instance
 dsp_settings = Settings()

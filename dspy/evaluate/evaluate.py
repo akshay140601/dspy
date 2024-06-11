@@ -30,7 +30,7 @@ class Evaluate:
         self.display = display
         self.max_errors = max_errors
         self.error_count = 0
-        self.error_lock = threading.Lock()
+        #self.error_lock = threading.Lock()
 
     def _execute_single_thread(self, wrapped_program, devset, display_progress):
         ncorrect = 0
@@ -98,9 +98,9 @@ class Evaluate:
                 score = metric(example, prediction)  # FIXME: TODO: What's the right order? Maybe force name-based kwargs!
                 return example_idx, example, prediction, score
             except Exception as e:
-                with self.error_lock:
-                    self.error_count += 1
-                    current_error_count = self.error_count
+                #with self.error_lock:
+                self.error_count += 1
+                current_error_count = self.error_count
                 if current_error_count >= self.max_errors:
                     raise e
                 print(f"Error for example in dev set: \t\t {e}")

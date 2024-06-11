@@ -1,7 +1,7 @@
 import dsp
 import tqdm
 import random
-import threading
+#import threading
 from dspy.predict.retry import Retry
 
 from dspy.primitives import Example
@@ -41,7 +41,7 @@ class BootstrapFewShot(Teleprompter):
         self.max_rounds = max_rounds
         self.max_errors= max_errors
         self.error_count = 0
-        self.error_lock = threading.Lock()
+        #self.error_lock = threading.Lock()
 
         self.only_reset_uncompiled = only_reset_uncompiled
 
@@ -148,9 +148,9 @@ class BootstrapFewShot(Teleprompter):
                 # print(success, example, prediction)
         except Exception as e:
             success = False
-            with self.error_lock:
-                self.error_count += 1
-                current_error_count = self.error_count
+            #with self.error_lock:
+            self.error_count += 1
+            current_error_count = self.error_count
             if current_error_count >= self.max_errors:
                 raise e
             print(f'Failed to run or to evaluate example {example} with {self.metric} due to {e}.')
